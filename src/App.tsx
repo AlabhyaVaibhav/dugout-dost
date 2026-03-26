@@ -813,16 +813,19 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
   const [preds, setPreds] = useState<DailyPrediction[]>([]);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [selectedWinners, setSelectedWinners] = useState<Record<string, Team>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedMatch, setSavedMatch] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribeMatches = onSnapshot(collection(db, 'matches'), (snapshot) => {
-      setMatches(snapshot.docs.map(doc => doc.data() as Match).sort((a, b) => a.dateTime.toDate() - b.dateTime.toDate()));
+      setMatches(snapshot.docs.map(d => d.data() as Match).sort((a, b) => a.dateTime.toDate() - b.dateTime.toDate()));
     }, (error) => {
       handleFirestoreError(error, OperationType.GET, 'matches');
     });
 
-    const unsubscribePreds = onSnapshot(collection(db, 'dailyPredictions'), (snapshot) => {
-      const userPreds = snapshot.docs.map(doc => doc.data() as DailyPrediction).filter(p => p.uid === user.uid);
+    const q = query(collection(db, 'dailyPredictions'), where('uid', '==', user.uid));
+    const unsubscribePreds = onSnapshot(q, (snapshot) => {
+      const userPreds = snapshot.docs.map(d => d.data() as DailyPrediction);
       setPreds(userPreds);
       setSelectedWinners(prev => {
         const next = { ...prev };
@@ -841,13 +844,21 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
     };
   }, [user.uid]);
 
+  useEffect(() => {
+    if (savedMatch) {
+      const t = setTimeout(() => setSavedMatch(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [savedMatch]);
+
   const handleSubmit = async (matchId: string) => {
     const winner = selectedWinners[matchId];
     if (!winner) return;
     
+    setSaveError(null);
     setSubmitting(matchId);
+    const predId = `${user.uid}_${matchId}`;
     try {
-      const predId = `${user.uid}_${matchId}`;
       const existing = preds.find(p => p.predictionId === predId);
       const now = new Date();
       const newPred: DailyPrediction = {
@@ -860,8 +871,11 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
       };
 
       await setDoc(doc(db, 'dailyPredictions', predId), newPred);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `dailyPredictions/${user.uid}_${matchId}`);
+      setSavedMatch(matchId);
+    } catch (error: any) {
+      console.error('Daily prediction save failed:', error);
+      setSaveError(error?.message || 'Failed to save prediction. Please try again.');
+      handleFirestoreError(error, OperationType.WRITE, `dailyPredictions/${predId}`);
     } finally {
       setSubmitting(null);
     }
@@ -878,6 +892,16 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
           </p>
         </div>
       </div>
+
+      <AnimatePresence>
+        {saveError && (
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="text-sm text-red-800"><strong>Save failed:</strong> {saveError}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="grid gap-6 md:grid-cols-2">
         {matches.map((match) => {
@@ -950,17 +974,21 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
                   </div>
                 )
               ) : (
-                <button
-                  disabled={!selectedWinner || !hasChanged || submitting === match.matchId}
-                  onClick={() => handleSubmit(match.matchId)}
-                  className="mt-auto w-full py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:bg-slate-200 disabled:text-slate-400 shadow-lg shadow-red-100"
-                >
-                  {submitting === match.matchId
-                    ? 'Saving...'
-                    : prediction
-                      ? 'Update Prediction'
-                      : 'Save Prediction'}
-                </button>
+                <div className="mt-auto space-y-2">
+                  <button
+                    disabled={!selectedWinner || !hasChanged || submitting === match.matchId}
+                    onClick={() => handleSubmit(match.matchId)}
+                    className="w-full py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50 disabled:bg-slate-200 disabled:text-slate-400 shadow-lg shadow-red-100"
+                  >
+                    {submitting === match.matchId
+                      ? 'Saving...'
+                      : savedMatch === match.matchId
+                        ? '✓ Saved!'
+                        : prediction
+                          ? 'Update Prediction'
+                          : 'Save Prediction'}
+                  </button>
+                </div>
               )}
             </div>
           );

@@ -1,8 +1,88 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          request.auth.token.email == "sportzwithsardarji@gmail.com");
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'displayName', 'photoURL', 'totalPoints', 'role']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && data.email.size() > 0 &&
+             data.displayName is string && data.displayName.size() > 0 &&
+             data.totalPoints is number &&
+             data.role in ['admin', 'user'];
+    }
+
+    function isValidLongTermPrediction(data) {
+      return hasOnlyAllowedFields(['uid', 'winner', 'runnerUp', 'top4', 'orangeCap', 'purpleCap', 'mvp', 'lastPlace', 'submittedAt', 'updatedAt']) &&
+             data.uid is string && data.uid == request.auth.uid &&
+             data.winner is string && data.runnerUp is string &&
+             data.top4 is list && data.orangeCap is string &&
+             data.purpleCap is string && data.lastPlace is string;
+    }
+
+    function isValidMatch(data) {
+      return hasOnlyAllowedFields(['matchId', 'team1', 'team2', 'dateTime', 'status', 'winner', 'margin', 'playerOfTheMatch']) &&
+             data.matchId is string && data.team1 is string && data.team2 is string &&
+             data.dateTime is timestamp && data.status in ['upcoming', 'completed'];
+    }
+
+    function isValidDailyPrediction(data) {
+      return hasOnlyAllowedFields(['predictionId', 'uid', 'matchId', 'winner', 'margin', 'playerOfTheMatch', 'pointsEarned', 'submittedAt', 'updatedAt']) &&
+             data.predictionId is string && data.uid is string && data.uid == request.auth.uid &&
+             data.matchId is string && data.winner is string;
+    }
+
+    match /users/{uid} {
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) && 
+        (request.resource.data.role == 'user' || 
+         (request.resource.data.role == 'admin' && request.auth.token.email == "sportzwithsardarji@gmail.com"));
+      
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(uid) && isValidUser(request.resource.data) && request.resource.data.role == resource.data.role));
+      
+      allow delete: if isAdmin();
+    }
+
+    match /longTermPredictions/{uid} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(uid) && isValidLongTermPrediction(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(uid) && isValidLongTermPrediction(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /matches/{matchId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidMatch(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /dailyPredictions/{predictionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(request.resource.data.uid) && isValidDailyPrediction(request.resource.data);
+      allow update: if isAuthenticated() && (isAdmin() || (isOwner(resource.data.uid) && isValidDailyPrediction(request.resource.data)));
+      allow delete: if isAdmin();
     }
   }
 }
