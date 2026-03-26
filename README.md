@@ -1,5 +1,7 @@
 # Dugout Dost
 
+![Dugout Dost Banner](https://github.com/AlabhyaVaibhav/dugout-dost/blob/main/public/banner.png)
+
 The IPL prediction league app for the YouTube community. Predict match winners, make season-long picks, and compete on a real-time leaderboard.
 
 ## Features
