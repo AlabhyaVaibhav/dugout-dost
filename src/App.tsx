@@ -842,12 +842,15 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
     setSubmitting(matchId);
     try {
       const predId = `${user.uid}_${matchId}`;
+      const existing = preds.find(p => p.predictionId === predId);
+      const now = new Date();
       const newPred: DailyPrediction = {
         predictionId: predId,
         uid: user.uid,
         matchId,
         winner,
-        submittedAt: new Date()
+        submittedAt: existing?.submittedAt ?? now,
+        updatedAt: now,
       };
 
       await setDoc(doc(db, 'dailyPredictions', predId), newPred);
@@ -987,10 +990,12 @@ const LongTermForm = ({ user }: { user: UserProfile }) => {
     if (isSeasonStarted) return;
     setSaving(true);
     try {
+      const now = new Date();
       await setDoc(doc(db, 'longTermPredictions', user.uid), {
         ...prediction,
         uid: user.uid,
-        submittedAt: new Date()
+        submittedAt: prediction.submittedAt ?? now,
+        updatedAt: now,
       });
       alert('Predictions saved successfully!');
     } catch (error) {
@@ -1473,7 +1478,220 @@ const AdminPanel = () => {
       </section>
 
       <UserManagement users={users} loading={loading} onDeleteUser={handleDeleteUser} />
+
+      <PredictionLog users={users} matches={matches} />
     </div>
+  );
+};
+
+const PredictionLog = ({ users, matches }: { users: UserProfile[]; matches: Match[] }) => {
+  const [dailyPreds, setDailyPreds] = useState<DailyPrediction[]>([]);
+  const [longTermPreds, setLongTermPreds] = useState<LongTermPrediction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedUser, setExpandedUser] = useState<string | null>(null);
+  const [tab, setTab] = useState<'daily' | 'season'>('daily');
+
+  useEffect(() => {
+    const unsubDaily = onSnapshot(collection(db, 'dailyPredictions'), (snap) => {
+      setDailyPreds(snap.docs.map(d => d.data() as DailyPrediction));
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'dailyPredictions'));
+
+    const unsubLong = onSnapshot(collection(db, 'longTermPredictions'), (snap) => {
+      setLongTermPreds(snap.docs.map(d => d.data() as LongTermPrediction));
+      setLoading(false);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'longTermPredictions'));
+
+    return () => { unsubDaily(); unsubLong(); };
+  }, []);
+
+  const matchMap = Object.fromEntries(matches.map(m => [m.matchId, m]));
+  const userMap = Object.fromEntries(users.map(u => [u.uid, u]));
+
+  const userIds = [...new Set([
+    ...dailyPreds.map(p => p.uid),
+    ...longTermPreds.map(p => p.uid),
+  ])];
+
+  const formatTs = (ts: any) => {
+    if (!ts) return '—';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return format(d, 'MMM d, h:mm a');
+  };
+
+  if (loading) {
+    return (
+      <section className="space-y-4">
+        <h2 className="text-xl font-bold">Prediction Log</h2>
+        <div className="flex items-center justify-center py-12">
+          <div className="w-8 h-8 border-4 border-red-200 border-t-red-600 rounded-full animate-spin" />
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold">Prediction Log</h2>
+        <div className="flex gap-2">
+          {(['daily', 'season'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                'px-4 py-1.5 rounded-lg text-xs font-bold capitalize transition-all',
+                tab === t ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              )}
+            >
+              {t === 'daily' ? 'Daily Predictions' : 'Season Predictions'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-50">
+        {userIds.length === 0 && (
+          <div className="p-8 text-center text-slate-400 text-sm">No predictions yet.</div>
+        )}
+
+        {userIds.map(uid => {
+          const u = userMap[uid];
+          const isExpanded = expandedUser === uid;
+          const userDailyPreds = dailyPreds
+            .filter(p => p.uid === uid)
+            .sort((a, b) => {
+              const da = a.updatedAt?.toDate?.() ?? a.submittedAt?.toDate?.() ?? new Date(a.submittedAt);
+              const db2 = b.updatedAt?.toDate?.() ?? b.submittedAt?.toDate?.() ?? new Date(b.submittedAt);
+              return db2.getTime() - da.getTime();
+            });
+          const userLongTerm = longTermPreds.find(p => p.uid === uid);
+
+          const predCount = tab === 'daily' ? userDailyPreds.length : (userLongTerm ? 1 : 0);
+
+          return (
+            <div key={uid}>
+              <button
+                onClick={() => setExpandedUser(isExpanded ? null : uid)}
+                className="w-full flex items-center gap-4 p-4 hover:bg-slate-50/50 transition-colors text-left"
+              >
+                <img
+                  src={u?.photoURL || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`}
+                  className="w-9 h-9 rounded-full bg-slate-100 shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <span className="font-bold text-slate-900 text-sm">{u?.displayName || uid}</span>
+                  <span className="text-xs text-slate-400 ml-2">{u?.email}</span>
+                </div>
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full shrink-0">
+                  {predCount} {tab === 'daily' ? (predCount === 1 ? 'pick' : 'picks') : (predCount === 1 ? 'entry' : 'entries')}
+                </span>
+                <ChevronRight className={cn('w-4 h-4 text-slate-400 transition-transform', isExpanded && 'rotate-90')} />
+              </button>
+
+              <AnimatePresence>
+                {isExpanded && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    {tab === 'daily' ? (
+                      userDailyPreds.length === 0 ? (
+                        <div className="px-6 pb-4 text-sm text-slate-400">No daily predictions.</div>
+                      ) : (
+                        <div className="px-4 pb-4">
+                          <div className="rounded-2xl border border-slate-100 overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-slate-50 text-left">
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Match</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Pick</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Pts</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Submitted</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Last Updated</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {userDailyPreds.map(pred => {
+                                  const m = matchMap[pred.matchId];
+                                  return (
+                                    <tr key={pred.predictionId} className="hover:bg-slate-50/50">
+                                      <td className="px-4 py-3 font-medium text-slate-900">
+                                        {m ? `${m.team1} vs ${m.team2}` : pred.matchId}
+                                        {m && (
+                                          <div className="text-[10px] text-slate-400 mt-0.5">
+                                            {format(m.dateTime.toDate(), 'MMM d')}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <span className="px-2 py-0.5 bg-red-50 text-red-600 rounded font-bold text-xs">
+                                          {pred.winner}
+                                        </span>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {pred.pointsEarned != null ? (
+                                          <span className={cn('font-bold', pred.pointsEarned > 0 ? 'text-green-600' : 'text-slate-400')}>
+                                            {pred.pointsEarned > 0 ? `+${pred.pointsEarned}` : '0'}
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-300">—</span>
+                                        )}
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-slate-500">{formatTs(pred.submittedAt)}</td>
+                                      <td className="px-4 py-3 text-xs text-slate-500">{formatTs(pred.updatedAt)}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )
+                    ) : (
+                      !userLongTerm ? (
+                        <div className="px-6 pb-4 text-sm text-slate-400">No season prediction submitted.</div>
+                      ) : (
+                        <div className="px-4 pb-4">
+                          <div className="rounded-2xl border border-slate-100 overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="bg-slate-50 text-left">
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Field</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Pick</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-50">
+                                {[
+                                  { label: 'Winner', value: userLongTerm.winner },
+                                  { label: 'Runner-up', value: userLongTerm.runnerUp },
+                                  { label: 'Top 4', value: userLongTerm.top4?.join(', ') },
+                                  { label: 'Last Place', value: userLongTerm.lastPlace },
+                                  { label: 'Orange Cap', value: userLongTerm.orangeCap },
+                                  { label: 'Purple Cap', value: userLongTerm.purpleCap },
+                                  { label: 'Submitted', value: formatTs(userLongTerm.submittedAt) },
+                                  { label: 'Last Updated', value: formatTs(userLongTerm.updatedAt) },
+                                ].map(row => (
+                                  <tr key={row.label} className="hover:bg-slate-50/50">
+                                    <td className="px-4 py-2.5 font-medium text-slate-500">{row.label}</td>
+                                    <td className="px-4 py-2.5 font-bold text-slate-900">{row.value || '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 };
 

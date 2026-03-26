@@ -23,6 +23,7 @@ export interface LongTermPrediction {
   purpleCap: string;
   lastPlace: Team;
   submittedAt: any;
+  updatedAt?: any;
 }
 
 export interface Match {
@@ -45,4 +46,5 @@ export interface DailyPrediction {
   playerOfTheMatch?: string;
   pointsEarned?: number;
   submittedAt: any;
+  updatedAt?: any;
 }
