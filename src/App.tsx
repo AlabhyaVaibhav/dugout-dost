@@ -977,7 +977,7 @@ const LongTermForm = ({ user }: { user: UserProfile }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const isSeasonStarted = isAfter(new Date(), new Date('2026-03-26T19:30:00'));
+  const isSeasonStarted = isAfter(new Date(), new Date('2026-04-10T19:29:00'));
 
   useEffect(() => {
     const unsubscribe = onSnapshot(doc(db, 'longTermPredictions', user.uid), (snapshot) => {
@@ -1026,8 +1026,15 @@ const LongTermForm = ({ user }: { user: UserProfile }) => {
         <p className="opacity-80">
           {isSeasonStarted 
             ? "Season has started. Predictions are now locked." 
-            : "Lock in your picks for the entire season. These can be edited until the first match starts!"}
+            : "Lock in your picks for the entire season. These can be edited until the deadline!"}
         </p>
+        <div className={cn(
+          "inline-flex items-center gap-2 mt-4 px-4 py-2 rounded-xl text-sm font-bold",
+          isSeasonStarted ? "bg-white/10 text-white/70" : "bg-white/20 text-white"
+        )}>
+          <Clock className="w-4 h-4" />
+          {isSeasonStarted ? "Closed on" : "Deadline:"} April 10, 7:29 PM IST
+        </div>
       </div>
 
       <div className={cn("bg-white rounded-3xl p-8 border border-slate-100 shadow-sm space-y-6", isSeasonStarted && "opacity-75 pointer-events-none")}>
@@ -1117,6 +1124,17 @@ const LongTermForm = ({ user }: { user: UserProfile }) => {
               className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl font-medium"
             />
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-bold text-slate-700 mb-2">MVP of the Season</label>
+          <input 
+            type="text" 
+            placeholder="Player Name"
+            value={prediction.mvp || ''}
+            onChange={e => setPrediction({...prediction, mvp: e.target.value})}
+            className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl font-medium"
+          />
         </div>
 
         <button
@@ -1375,6 +1393,27 @@ const AdminPanel = () => {
     }
   };
 
+  const handleResetLeaderboard = async () => {
+    if (!confirm('Reset leaderboard? This sets totalPoints to 0 for ALL users. This cannot be undone.')) return;
+    try {
+      setLoading(true);
+      const snap = await getDocs(collection(db, 'users'));
+      for (const userDoc of snap.docs) {
+        await setDoc(userDoc.ref, { totalPoints: 0 }, { merge: true });
+      }
+      const predsSnap = await getDocs(collection(db, 'dailyPredictions'));
+      for (const predDoc of predsSnap.docs) {
+        await setDoc(predDoc.ref, { pointsEarned: 0 }, { merge: true });
+      }
+      setSyncMessage('Leaderboard has been reset to 0 for all users.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+      setSyncMessage('Failed to reset leaderboard. Check console.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDeleteMatch = async (matchId: string) => {
     try {
       setLoading(true);
@@ -1418,6 +1457,13 @@ const AdminPanel = () => {
               className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all disabled:opacity-50"
             >
               Import All Matches from Feed
+            </button>
+            <button 
+              onClick={handleResetLeaderboard}
+              disabled={loading}
+              className="px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-all disabled:opacity-50"
+            >
+              Reset Leaderboard
             </button>
           </div>
           <AnimatePresence>
@@ -1676,6 +1722,7 @@ const PredictionLog = ({ users, matches }: { users: UserProfile[]; matches: Matc
                                   { label: 'Last Place', value: userLongTerm.lastPlace },
                                   { label: 'Orange Cap', value: userLongTerm.orangeCap },
                                   { label: 'Purple Cap', value: userLongTerm.purpleCap },
+                                  { label: 'MVP of the Season', value: userLongTerm.mvp },
                                   { label: 'Submitted', value: formatTs(userLongTerm.submittedAt) },
                                   { label: 'Last Updated', value: formatTs(userLongTerm.updatedAt) },
                                 ].map(row => (

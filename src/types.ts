@@ -21,6 +21,7 @@ export interface LongTermPrediction {
   top4: Team[];
   orangeCap: string;
   purpleCap: string;
+  mvp: string;
   lastPlace: Team;
   submittedAt: any;
   updatedAt?: any;
