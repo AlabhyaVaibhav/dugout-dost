@@ -1,0 +1,72 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about a user in the prediction league",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user" },
+        "email": { "type": "string", "format": "email", "description": "The email of the user" },
+        "displayName": { "type": "string", "description": "The display name of the user" },
+        "photoURL": { "type": "string", "description": "The photo URL of the user" },
+        "totalPoints": { "type": "number", "description": "The total points earned by the user" },
+        "role": { "type": "string", "enum": ["admin", "user"], "description": "The role of the user" }
+      },
+      "required": ["uid", "email", "displayName", "totalPoints", "role"]
+    },
+    "LongTermPrediction": {
+      "title": "Long Term Prediction",
+      "description": "Season-long predictions made by a user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user" },
+        "winner": { "type": "string", "description": "Predicted winner" },
+        "runnerUp": { "type": "string", "description": "Predicted runner-up" },
+        "top4": { "type": "array", "items": { "type": "string" }, "description": "Predicted top 4 teams" },
+        "orangeCap": { "type": "string", "description": "Predicted orange cap winner" },
+        "purpleCap": { "type": "string", "description": "Predicted purple cap winner" },
+        "lastPlace": { "type": "string", "description": "Predicted last place team" },
+        "submittedAt": { "type": "string", "format": "date-time", "description": "When the prediction was submitted" }
+      },
+      "required": ["uid", "winner", "runnerUp", "top4", "orangeCap", "purpleCap", "lastPlace", "submittedAt"]
+    },
+    "Match": {
+      "title": "Match",
+      "description": "An IPL match",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string", "description": "The unique ID of the match" },
+        "team1": { "type": "string", "description": "First team" },
+        "team2": { "type": "string", "description": "Second team" },
+        "dateTime": { "type": "string", "format": "date-time", "description": "When the match starts" },
+        "status": { "type": "string", "enum": ["upcoming", "completed"], "description": "The status of the match" },
+        "winner": { "type": "string", "description": "Actual winner" },
+        "margin": { "type": "string", "description": "Actual margin" },
+        "playerOfTheMatch": { "type": "string", "description": "Actual player of the match" }
+      },
+      "required": ["matchId", "team1", "team2", "dateTime", "status"]
+    },
+    "DailyPrediction": {
+      "title": "Daily Match Prediction",
+      "description": "A user's prediction for a specific match",
+      "type": "object",
+      "properties": {
+        "predictionId": { "type": "string", "description": "The unique ID of the prediction" },
+        "uid": { "type": "string", "description": "The unique ID of the user" },
+        "matchId": { "type": "string", "description": "The unique ID of the match" },
+        "winner": { "type": "string", "description": "Predicted winner" },
+        "margin": { "type": "string", "description": "Predicted margin" },
+        "playerOfTheMatch": { "type": "string", "description": "Predicted player of the match" },
+        "pointsEarned": { "type": "number", "description": "Points earned for this prediction" },
+        "submittedAt": { "type": "string", "format": "date-time", "description": "When the prediction was submitted" }
+      },
+      "required": ["predictionId", "uid", "matchId", "winner", "submittedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "User", "description": "User profiles" },
+    "/longTermPredictions/{uid}": { "schema": "LongTermPrediction", "description": "Season-long predictions" },
+    "/matches/{matchId}": { "schema": "Match", "description": "IPL matches" },
+    "/dailyPredictions/{predictionId}": { "schema": "DailyPrediction", "description": "Daily match predictions" }
+  }
+}
