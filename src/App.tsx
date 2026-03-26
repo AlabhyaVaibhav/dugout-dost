@@ -136,10 +136,10 @@ const Navbar = ({ user, points }: { user: UserProfile | null, points: number }) 
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-4 py-2 md:top-0 md:bottom-auto md:border-t-0 md:border-b md:bg-white/80 md:backdrop-blur-md z-50">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="hidden md:flex items-center gap-2 font-bold text-slate-900 text-xl">
-          <Trophy className="w-6 h-6 text-red-600" />
+        <Link to="/" className="hidden md:flex items-center gap-2 font-bold text-slate-900 text-xl shrink-0">
+          <img src="/logo.png" alt="Dugout Dost" className="w-9 h-9 rounded-lg object-cover" />
           <span>Dugout Dost</span>
-        </div>
+        </Link>
 
         <div className="flex flex-1 justify-around md:flex-none md:gap-8">
           {navItems.map((item) => {
@@ -238,9 +238,7 @@ const Auth = () => {
         animate={{ opacity: 1, y: 0 }}
         className="max-w-md w-full bg-white rounded-3xl shadow-xl shadow-slate-200 p-8 text-center relative z-10 border border-slate-100"
       >
-        <div className="w-20 h-20 bg-red-50 rounded-2xl flex items-center justify-center mx-auto mb-5 border-2 border-red-100">
-          <Trophy className="w-10 h-10 text-red-600" />
-        </div>
+        <img src="/logo.png" alt="Dugout Dost" className="w-24 h-24 rounded-2xl object-cover mx-auto mb-5 shadow-lg shadow-red-100" />
         <h1 className="text-3xl font-black text-slate-900 mb-1 tracking-tight uppercase">Dugout Dost</h1>
         <p className="text-slate-500 mb-6 text-sm">The IPL prediction league</p>
 
@@ -779,10 +777,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <Router>
-        <div className="min-h-screen bg-slate-50 pb-24 md:pb-0 md:pt-20">
+        <div className="min-h-screen bg-slate-50 pb-24 md:pb-0 md:pt-20 flex flex-col">
           <Navbar user={user} points={user.totalPoints} />
           
-          <main className="max-w-7xl mx-auto p-4 md:p-8">
+          <main className="max-w-7xl mx-auto p-4 md:p-8 flex-1 w-full">
             <Routes>
               <Route path="/" element={<Dashboard user={user} />} />
               <Route path="/schedule" element={<Schedule />} />
@@ -794,6 +792,15 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
+
+          <footer className="hidden md:block w-full bg-[#1b4f7a] mt-8">
+            <div className="max-w-7xl mx-auto">
+              <img src="/banner.png" alt="Dugout Dost — Podcasts, Live, Reaction Videos, Football Tactical Analysis" className="w-full h-auto object-cover" />
+            </div>
+            <div className="text-center py-3 text-xs text-white/60 font-medium tracking-wide">
+              &copy; {new Date().getFullYear()} Dugout Dost &middot; Sportz with Sardarji
+            </div>
+          </footer>
         </div>
       </Router>
     </ErrorBoundary>
