@@ -678,7 +678,6 @@ const Rules = () => {
           <div className="grid gap-2">
             {[
               { label: 'Correct Winner', pts: 5 },
-              { label: 'Correct Winner + Margin', pts: '+3' },
               { label: 'Player of the Match (optional)', pts: '+2' },
               { label: 'Wrong Prediction', pts: 0 },
             ].map((rule, i) => (
