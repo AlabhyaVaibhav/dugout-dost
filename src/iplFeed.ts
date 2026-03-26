@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 function getIPLFeedURL() {
-  return `/api/ipl-feed?MatchSchedule=_jqjsp&_${Date.now()}=`;
+  return `/api/ipl-feed?_=${Date.now()}`;
 }
 
 const FIVE_MINUTES = 5 * 60 * 1000;
@@ -32,8 +32,13 @@ export async function fetchIPLSchedule(): Promise<IPLMatch[]> {
   const response = await fetch(getIPLFeedURL());
   const text = await response.text();
 
-  const jsonStr = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
-  const data = JSON.parse(jsonStr);
+  let data: any;
+  if (text.trimStart().startsWith('{')) {
+    data = JSON.parse(text);
+  } else {
+    const jsonStr = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
+    data = JSON.parse(jsonStr);
+  }
 
   return (data.Matchsummary ?? []) as IPLMatch[];
 }
