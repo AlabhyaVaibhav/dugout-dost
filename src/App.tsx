@@ -813,6 +813,7 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
   const [preds, setPreds] = useState<DailyPrediction[]>([]);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [selectedWinners, setSelectedWinners] = useState<Record<string, Team>>({});
+  const [selectedPotm, setSelectedPotm] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedMatch, setSavedMatch] = useState<string | null>(null);
 
@@ -831,6 +832,13 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
         const next = { ...prev };
         for (const p of userPreds) {
           if (!(p.matchId in next)) next[p.matchId] = p.winner;
+        }
+        return next;
+      });
+      setSelectedPotm(prev => {
+        const next = { ...prev };
+        for (const p of userPreds) {
+          if (!(p.matchId in next) && p.playerOfTheMatch) next[p.matchId] = p.playerOfTheMatch;
         }
         return next;
       });
@@ -860,12 +868,14 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
     const predId = `${user.uid}_${matchId}`;
     try {
       const existing = preds.find(p => p.predictionId === predId);
+      const potm = selectedPotm[matchId]?.trim() || '';
       const now = new Date();
       const newPred: DailyPrediction = {
         predictionId: predId,
         uid: user.uid,
         matchId,
         winner,
+        ...(potm ? { playerOfTheMatch: potm } : {}),
         submittedAt: existing?.submittedAt ?? now,
         updatedAt: now,
       };
@@ -909,7 +919,10 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
           const deadline = subMinutes(match.dateTime.toDate(), 15);
           const isLocked = isAfter(new Date(), deadline) || match.status === 'completed';
           const selectedWinner = selectedWinners[match.matchId];
-          const hasChanged = prediction ? selectedWinner !== prediction.winner : !!selectedWinner;
+          const currentPotm = selectedPotm[match.matchId] ?? '';
+          const hasChanged = prediction
+            ? selectedWinner !== prediction.winner || currentPotm !== (prediction.playerOfTheMatch || '')
+            : !!selectedWinner;
           
           return (
             <div key={match.matchId} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm flex flex-col">
@@ -957,15 +970,32 @@ const DailyPredictions = ({ user }: { user: UserProfile }) => {
                 })}
               </div>
 
+              <div className="mb-4">
+                <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase tracking-wider">Player of the Match (optional, +2 pts)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Virat Kohli"
+                  value={currentPotm}
+                  onChange={e => setSelectedPotm(prev => ({ ...prev, [match.matchId]: e.target.value }))}
+                  disabled={isLocked}
+                  className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                />
+              </div>
+
               {isLocked ? (
                 prediction ? (
-                  <div className="mt-auto pt-4 border-t border-slate-50 flex items-center gap-2 text-sm text-slate-500 justify-center">
-                    <CheckCircle2 className="w-4 h-4 text-green-500" />
-                    Your pick: <span className="font-bold text-slate-900">{prediction.winner}</span>
-                    {prediction.pointsEarned != null && (
-                      <span className={cn("font-bold ml-2", prediction.pointsEarned > 0 ? "text-green-600" : "text-slate-400")}>
-                        {prediction.pointsEarned > 0 ? `+${prediction.pointsEarned} pts` : '0 pts'}
-                      </span>
+                  <div className="mt-auto pt-4 border-t border-slate-50 space-y-1 text-center">
+                    <div className="flex items-center gap-2 text-sm text-slate-500 justify-center">
+                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                      Your pick: <span className="font-bold text-slate-900">{prediction.winner}</span>
+                      {prediction.pointsEarned != null && (
+                        <span className={cn("font-bold ml-2", prediction.pointsEarned > 0 ? "text-green-600" : "text-slate-400")}>
+                          {prediction.pointsEarned > 0 ? `+${prediction.pointsEarned} pts` : '0 pts'}
+                        </span>
+                      )}
+                    </div>
+                    {prediction.playerOfTheMatch && (
+                      <div className="text-xs text-slate-400">POTM: <span className="font-bold text-slate-600">{prediction.playerOfTheMatch}</span></div>
                     )}
                   </div>
                 ) : (
