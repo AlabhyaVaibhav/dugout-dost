@@ -181,6 +181,8 @@ const Navbar = ({ user, points }: { user: UserProfile | null, points: number }) 
 
 const ADMIN_EMAIL = 'sportzwithsardarji@gmail.com';
 
+let _pendingDisplayName: string | null = null;
+
 const Auth = () => {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -208,8 +210,11 @@ const Auth = () => {
     setError(null);
     try {
       if (mode === 'signup') {
+        _pendingDisplayName = displayName || null;
         const cred = await createUserWithEmailAndPassword(auth, email, password);
-        if (displayName) await updateProfile(cred.user, { displayName });
+        if (displayName) {
+          await updateProfile(cred.user, { displayName });
+        }
       } else {
         await signInWithEmailAndPassword(auth, email, password);
       }
@@ -720,10 +725,13 @@ export default function App() {
       }
 
       const isAdmin = firebaseUser.email === ADMIN_EMAIL;
+      const resolvedName = firebaseUser.displayName || _pendingDisplayName || 'Anonymous';
+      _pendingDisplayName = null;
+
       const profileData: Record<string, any> = {
         uid: firebaseUser.uid,
         email: firebaseUser.email || '',
-        displayName: firebaseUser.displayName || 'Anonymous',
+        displayName: resolvedName,
         totalPoints: 0,
         role: isAdmin ? 'admin' : 'user',
       };
@@ -738,7 +746,6 @@ export default function App() {
         if (!userDoc.exists()) {
           try {
             await setDoc(userRef, profileData);
-            console.log('User profile created in Firestore:', firebaseUser.uid);
           } catch (writeErr) {
             console.warn('Firestore create failed, retrying with merge:', writeErr);
             await setDoc(userRef, profileData, { merge: true });
@@ -746,9 +753,18 @@ export default function App() {
           setUser(asUserProfile);
         } else {
           const data = userDoc.data() as UserProfile;
+          const updates: Record<string, any> = {};
+
+          if (data.displayName === 'Anonymous' && resolvedName !== 'Anonymous') {
+            updates.displayName = resolvedName;
+          }
           if (isAdmin && data.role !== 'admin') {
-            await setDoc(userRef, { role: 'admin' }, { merge: true });
-            setUser({ ...data, role: 'admin' });
+            updates.role = 'admin';
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await setDoc(userRef, updates, { merge: true });
+            setUser({ ...data, ...updates });
           } else {
             setUser(data);
           }
