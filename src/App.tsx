@@ -1590,7 +1590,284 @@ const AdminPanel = () => {
       <UserManagement users={users} loading={loading} onDeleteUser={handleDeleteUser} />
 
       <PredictionLog users={users} matches={matches} />
+
+      <SeasonScoringTool users={users} />
     </div>
+  );
+};
+
+// --- Season Scoring Test Tool (Admin Only) ---
+
+interface ActualResults {
+  winner: Team | '';
+  runnerUp: Team | '';
+  top4: Team[];
+  lastPlace: Team | '';
+  orangeCap: string;
+  purpleCap: string;
+  mvp: string;
+}
+
+interface UserScoreBreakdown {
+  uid: string;
+  displayName: string;
+  total: number;
+  winner: number;
+  runnerUp: number;
+  top4Match: number;
+  top4OrderBonus: number;
+  finalistPairBonus: number;
+  comboBonus: number;
+  orangeCap: number;
+  purpleCap: number;
+  mvp: number;
+  lastPlace: number;
+}
+
+function computeSeasonScore(pred: LongTermPrediction, actual: ActualResults): Omit<UserScoreBreakdown, 'uid' | 'displayName'> {
+  let winner = 0, runnerUp = 0, top4Match = 0, top4OrderBonus = 0;
+  let finalistPairBonus = 0, comboBonus = 0;
+  let orangeCap = 0, purpleCap = 0, mvp = 0, lastPlace = 0;
+
+  if (actual.winner && pred.winner === actual.winner) winner = 50;
+  if (actual.runnerUp && pred.runnerUp === actual.runnerUp) runnerUp = 30;
+
+  if (actual.top4.length === 4 && pred.top4?.length) {
+    const correctTeams = pred.top4.filter(t => actual.top4.includes(t));
+    top4Match = correctTeams.length * 10;
+
+    if (pred.top4.length === 4 && actual.top4.length === 4) {
+      const perfectOrder = pred.top4.every((t, i) => t === actual.top4[i]);
+      if (perfectOrder) top4OrderBonus = 20;
+    }
+  }
+
+  if (actual.winner && actual.runnerUp) {
+    const actualFinalists = new Set([actual.winner, actual.runnerUp]);
+    const predFinalists = new Set([pred.winner, pred.runnerUp]);
+    const bothInFinalists = [...predFinalists].every(t => actualFinalists.has(t));
+    if (bothInFinalists && predFinalists.size === 2 && actualFinalists.size === 2) {
+      finalistPairBonus = 20;
+      if (winner === 50 && runnerUp === 30) comboBonus = 30;
+    }
+  }
+
+  if (actual.orangeCap && pred.orangeCap?.toLowerCase().trim() === actual.orangeCap.toLowerCase().trim()) orangeCap = 25;
+  if (actual.purpleCap && pred.purpleCap?.toLowerCase().trim() === actual.purpleCap.toLowerCase().trim()) purpleCap = 25;
+  if (actual.mvp && pred.mvp?.toLowerCase().trim() === actual.mvp.toLowerCase().trim()) mvp = 25;
+  if (actual.lastPlace && pred.lastPlace === actual.lastPlace) lastPlace = 20;
+
+  const total = winner + runnerUp + top4Match + top4OrderBonus + finalistPairBonus + comboBonus + orangeCap + purpleCap + mvp + lastPlace;
+  return { total, winner, runnerUp, top4Match, top4OrderBonus, finalistPairBonus, comboBonus, orangeCap, purpleCap, mvp, lastPlace };
+}
+
+const SeasonScoringTool = ({ users }: { users: UserProfile[] }) => {
+  const [longTermPreds, setLongTermPreds] = useState<LongTermPrediction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actual, setActual] = useState<ActualResults>({
+    winner: '', runnerUp: '', top4: [], lastPlace: '', orangeCap: '', purpleCap: '', mvp: '',
+  });
+  const [results, setResults] = useState<UserScoreBreakdown[] | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'longTermPredictions'), (snap) => {
+      setLongTermPreds(snap.docs.map(d => d.data() as LongTermPrediction));
+      setLoading(false);
+    }, (error) => handleFirestoreError(error, OperationType.GET, 'longTermPredictions'));
+    return () => unsub();
+  }, []);
+
+  const userMap = Object.fromEntries(users.map(u => [u.uid, u]));
+
+  const runScoring = () => {
+    const scored: UserScoreBreakdown[] = longTermPreds.map(pred => {
+      const u = userMap[pred.uid];
+      const breakdown = computeSeasonScore(pred, actual);
+      return { uid: pred.uid, displayName: u?.displayName || pred.uid, ...breakdown };
+    }).sort((a, b) => b.total - a.total);
+    setResults(scored);
+  };
+
+  const applyScores = async () => {
+    if (!results) return;
+    if (!confirm('Apply these season scores to the leaderboard? This will ADD these points to each user\'s totalPoints.')) return;
+    setApplying(true);
+    try {
+      for (const r of results) {
+        if (r.total === 0) continue;
+        const userRef = doc(db, 'users', r.uid);
+        const userDoc = await getDoc(userRef);
+        if (userDoc.exists()) {
+          const current = (userDoc.data() as UserProfile).totalPoints || 0;
+          await setDoc(userRef, { totalPoints: current + r.total }, { merge: true });
+        }
+      }
+      alert(`Season scores applied to ${results.filter(r => r.total > 0).length} users.`);
+    } catch (error) {
+      console.error('Apply scores error:', error);
+      alert('Failed to apply scores. Check console.');
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const scoreCols: { key: keyof Omit<UserScoreBreakdown, 'uid' | 'displayName'>; label: string; max: number }[] = [
+    { key: 'winner', label: 'Winner', max: 50 },
+    { key: 'runnerUp', label: 'Runner-up', max: 30 },
+    { key: 'top4Match', label: 'Top 4', max: 40 },
+    { key: 'top4OrderBonus', label: 'Order', max: 20 },
+    { key: 'finalistPairBonus', label: 'Finalist', max: 20 },
+    { key: 'comboBonus', label: 'Combo', max: 30 },
+    { key: 'orangeCap', label: 'Orange', max: 25 },
+    { key: 'purpleCap', label: 'Purple', max: 25 },
+    { key: 'mvp', label: 'MVP', max: 25 },
+    { key: 'lastPlace', label: 'Last', max: 20 },
+  ];
+
+  return (
+    <section className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+          <Trophy className="w-5 h-5 text-amber-600" />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-900">Season Scoring Tool</h2>
+          <p className="text-xs text-slate-400">Enter actual results to simulate or apply season scores.</p>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 space-y-6">
+        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Actual Results</h3>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Winner</label>
+            <select value={actual.winner} onChange={e => setActual({ ...actual, winner: e.target.value as Team })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+              <option value="">Select</option>
+              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Runner-up</label>
+            <select value={actual.runnerUp} onChange={e => setActual({ ...actual, runnerUp: e.target.value as Team })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+              <option value="">Select</option>
+              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-bold text-slate-600 mb-1">Top 4 (in order, 1st → 4th)</label>
+          <div className="grid grid-cols-4 gap-2">
+            {[0, 1, 2, 3].map(i => (
+              <select key={i} value={actual.top4[i] || ''}
+                onChange={e => {
+                  const next = [...actual.top4];
+                  next[i] = e.target.value as Team;
+                  setActual({ ...actual, top4: next.filter(Boolean) as Team[] });
+                }}
+                className="p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+                <option value="">#{i + 1}</option>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Last Place</label>
+            <select value={actual.lastPlace} onChange={e => setActual({ ...actual, lastPlace: e.target.value as Team })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+              <option value="">Select</option>
+              {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">MVP of the Season</label>
+            <input type="text" placeholder="Player Name" value={actual.mvp}
+              onChange={e => setActual({ ...actual, mvp: e.target.value })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium" />
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Orange Cap</label>
+            <input type="text" placeholder="Player Name" value={actual.orangeCap}
+              onChange={e => setActual({ ...actual, orangeCap: e.target.value })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium" />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-600 mb-1">Purple Cap</label>
+            <input type="text" placeholder="Player Name" value={actual.purpleCap}
+              onChange={e => setActual({ ...actual, purpleCap: e.target.value })}
+              className="w-full p-2.5 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium" />
+          </div>
+        </div>
+
+        <button onClick={runScoring} disabled={loading}
+          className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all disabled:opacity-50">
+          {loading ? 'Loading predictions...' : 'Run Scoring Simulation'}
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {results && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+            className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-bold text-slate-900">Score Breakdown — {results.length} users</h3>
+              <button onClick={applyScores} disabled={applying}
+                className="px-5 py-2 bg-red-600 text-white text-sm font-bold rounded-xl hover:bg-red-700 transition-all disabled:opacity-50">
+                {applying ? 'Applying...' : 'Apply Scores to Leaderboard'}
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50 text-left">
+                    <th className="px-4 py-3 font-bold text-slate-500 text-xs uppercase tracking-wider sticky left-0 bg-slate-50">User</th>
+                    <th className="px-3 py-3 font-bold text-slate-500 text-xs uppercase tracking-wider text-center">Total</th>
+                    {scoreCols.map(c => (
+                      <th key={c.key} className="px-3 py-3 font-bold text-slate-400 text-[10px] uppercase tracking-wider text-center">{c.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {results.map((r, i) => (
+                    <tr key={r.uid} className="hover:bg-slate-50/50">
+                      <td className="px-4 py-3 font-medium text-slate-900 sticky left-0 bg-white whitespace-nowrap">
+                        <span className={cn(
+                          "inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold mr-2",
+                          i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-slate-100 text-slate-600" : i === 2 ? "bg-red-100 text-red-600" : "text-slate-400"
+                        )}>{i + 1}</span>
+                        {r.displayName}
+                      </td>
+                      <td className="px-3 py-3 text-center font-black text-red-600 text-base">{r.total}</td>
+                      {scoreCols.map(c => (
+                        <td key={c.key} className={cn("px-3 py-3 text-center font-bold text-xs",
+                          r[c.key] > 0 ? "text-green-600" : "text-slate-300"
+                        )}>
+                          {r[c.key] > 0 ? `+${r[c.key]}` : '—'}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {results.length === 0 && (
+                    <tr><td colSpan={12} className="px-4 py-8 text-center text-slate-400">No season predictions to score.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
   );
 };
 
