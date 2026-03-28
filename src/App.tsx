@@ -1288,6 +1288,7 @@ const AdminPanel = () => {
     status: 'upcoming'
   });
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [matchPotm, setMatchPotm] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (syncMessage) {
@@ -1387,25 +1388,28 @@ const AdminPanel = () => {
   const handleResolveMatch = async (match: Match, winner: Team, playerOfTheMatch?: string) => {
     try {
       setLoading(true);
+      const mom = playerOfTheMatch || match.playerOfTheMatch || '';
       await setDoc(doc(db, 'matches', match.matchId), {
         ...match,
         status: 'completed',
         winner,
-        playerOfTheMatch: playerOfTheMatch || match.playerOfTheMatch || ''
+        playerOfTheMatch: mom,
       });
 
-      // Logic to update points for all users who predicted this match
       const predsSnap = await getDocs(query(collection(db, 'dailyPredictions'), where('matchId', '==', match.matchId)));
       
       for (const predDoc of predsSnap.docs) {
         const pred = predDoc.data() as DailyPrediction;
         let points = 0;
         if (pred.winner === winner) {
-          points = 5; // Correct winner
+          points += 5;
         }
-        
+        if (mom && pred.playerOfTheMatch && pred.playerOfTheMatch.toLowerCase().trim() === mom.toLowerCase().trim()) {
+          points += 2;
+        }
+
+        await setDoc(doc(db, 'dailyPredictions', pred.predictionId), { ...pred, pointsEarned: points }, { merge: true });
         if (points > 0) {
-          await setDoc(doc(db, 'dailyPredictions', pred.predictionId), { ...pred, pointsEarned: points }, { merge: true });
           const userRef = doc(db, 'users', pred.uid);
           const userDoc = await getDoc(userRef);
           if (userDoc.exists()) {
@@ -1414,7 +1418,7 @@ const AdminPanel = () => {
           }
         }
       }
-      console.log(`Match ${match.matchId} resolved successfully.`);
+      setSyncMessage(`Match resolved: ${winner} won${mom ? `, POTM: ${mom}` : ''}.`);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `matches/${match.matchId}`);
     } finally {
@@ -1574,31 +1578,50 @@ const AdminPanel = () => {
       <section className="space-y-4">
         <h2 className="text-xl font-bold">Manage Matches</h2>
         {matches.map(match => (
-          <div key={match.matchId} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center justify-between">
-            <div>
-              <span className="font-bold">{match.team1} vs {match.team2}</span>
-              <div className="text-xs text-slate-400">
-                {format(match.dateTime.toDate(), 'PPP • p')} • {match.status}
-                {match.winner && <span className="ml-2 text-red-600 font-bold">• Winner: {match.winner}</span>}
-                {match.playerOfTheMatch && <span className="ml-2 text-slate-600">• MOM: {match.playerOfTheMatch}</span>}
+          <div key={match.matchId} className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-bold">{match.team1} vs {match.team2}</span>
+                <div className="text-xs text-slate-400">
+                  {format(match.dateTime.toDate(), 'PPP • p')} • {match.status}
+                  {match.winner && <span className="ml-2 text-red-600 font-bold">• Winner: {match.winner}</span>}
+                  {match.playerOfTheMatch && <span className="ml-2 text-slate-600">• POTM: {match.playerOfTheMatch}</span>}
+                </div>
               </div>
+              <button 
+                onClick={() => handleDeleteMatch(match.matchId)}
+                disabled={loading}
+                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all disabled:opacity-50 shrink-0"
+                title="Delete Match"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
-              <div className="flex items-center gap-2">
-                {match.status === 'upcoming' && (
-                  <div className="flex gap-2">
-                    <button onClick={() => handleResolveMatch(match, match.team1)} className="px-3 py-1 bg-slate-900 text-white text-xs rounded-lg">{match.team1} Won</button>
-                    <button onClick={() => handleResolveMatch(match, match.team2)} className="px-3 py-1 bg-slate-900 text-white text-xs rounded-lg">{match.team2} Won</button>
-                  </div>
-                )}
-                <button 
-                  onClick={() => handleDeleteMatch(match.matchId)}
+            {match.status === 'upcoming' && (
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-50">
+                <input
+                  type="text"
+                  placeholder="Player of the Match"
+                  value={matchPotm[match.matchId] || ''}
+                  onChange={e => setMatchPotm(prev => ({ ...prev, [match.matchId]: e.target.value }))}
+                  className="flex-1 p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-medium placeholder:text-slate-400"
+                />
+                <button
+                  onClick={() => handleResolveMatch(match, match.team1, matchPotm[match.matchId])}
                   disabled={loading}
-                  className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all disabled:opacity-50"
-                  title="Delete Match"
+                  className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  {match.team1} Won
+                </button>
+                <button
+                  onClick={() => handleResolveMatch(match, match.team2, matchPotm[match.matchId])}
+                  disabled={loading}
+                  className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
+                >
+                  {match.team2} Won
                 </button>
               </div>
+            )}
           </div>
         ))}
       </section>
