@@ -447,6 +447,7 @@ const Dashboard = ({ user }: { user: UserProfile }) => {
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   UpComing: { bg: 'bg-blue-50 border-blue-100', text: 'text-blue-600', label: 'Upcoming' },
+  Post: { bg: 'bg-green-50 border-green-100', text: 'text-green-600', label: 'Completed' },
   Completed: { bg: 'bg-green-50 border-green-100', text: 'text-green-600', label: 'Completed' },
   Live: { bg: 'bg-red-50 border-red-100', text: 'text-red-600', label: 'Live' },
 };
@@ -457,12 +458,12 @@ function getStatusStyle(status: string) {
 
 const Schedule = () => {
   const { matches, loading, error, lastUpdated, isMatchDay } = useIPLSchedule();
-  const [filter, setFilter] = useState<'all' | 'upcoming' | 'completed'>('all');
+  const [filter, setFilter] = useState<'all' | 'upcoming' | 'completed'>('upcoming');
 
   const grouped = matches
     .filter((m) => {
-      if (filter === 'upcoming') return m.MatchStatus === 'UpComing';
-      if (filter === 'completed') return m.MatchStatus === 'Completed';
+      if (filter === 'upcoming') return m.MatchStatus === 'UpComing' || m.MatchStatus === 'Live';
+      if (filter === 'completed') return m.MatchStatus === 'Post' || m.MatchStatus === 'Completed';
       return true;
     })
     .reduce<Record<string, IPLMatch[]>>((acc, m) => {
@@ -1354,7 +1355,7 @@ const AdminPanel = () => {
         if (existing.exists()) { skipped++; continue; }
 
         const dateTime = new Date(m.MATCH_COMMENCE_START_DATE);
-        const status = m.MatchStatus === 'Completed' ? 'completed' : 'upcoming';
+        const status = (m.MatchStatus === 'Completed' || m.MatchStatus === 'Post') ? 'completed' : 'upcoming';
 
         await setDoc(doc(db, 'matches', matchId), {
           matchId,
@@ -1439,7 +1440,7 @@ const AdminPanel = () => {
       let updatedCount = 0;
 
       for (const feedMatch of feed) {
-        if (feedMatch.MatchStatus === 'Completed' && feedMatch.WinningTeamID) {
+        if ((feedMatch.MatchStatus === 'Completed' || feedMatch.MatchStatus === 'Post') && feedMatch.WinningTeamID) {
           const team1 = TEAM_CODE_MAP[feedMatch.FirstBattingTeamCode];
           const team2 = TEAM_CODE_MAP[feedMatch.SecondBattingTeamCode];
           if (!team1 || !team2) continue;
@@ -1515,12 +1516,56 @@ const AdminPanel = () => {
     }
   };
 
+  const [adminTab, setAdminTab] = useState<'matches' | 'users' | 'predictions'>('matches');
+
+  const adminTabs: { key: typeof adminTab; label: string; icon: typeof Calendar }[] = [
+    { key: 'matches', label: 'Matches', icon: Calendar },
+    { key: 'users', label: 'Users', icon: UserPlus },
+    { key: 'predictions', label: 'Prediction Log', icon: Zap },
+  ];
+
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <h1 className="text-3xl font-bold text-slate-900">Admin Panel</h1>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-4">
+        <AnimatePresence>
+          {syncMessage && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-100"
+            >
+              {syncMessage}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {adminTabs.map(t => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.key}
+              onClick={() => setAdminTab(t.key)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap transition-all',
+                adminTab === t.key
+                  ? 'bg-slate-900 text-white shadow-lg shadow-slate-200'
+                  : 'bg-white text-slate-500 border border-slate-100 hover:bg-slate-50'
+              )}
+            >
+              <Icon className="w-4 h-4" />
+              {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {adminTab === 'matches' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3">
             <button 
               onClick={handleSyncIPLFeed}
               disabled={loading}
@@ -1536,6 +1581,80 @@ const AdminPanel = () => {
             >
               Import All Matches from Feed
             </button>
+          </div>
+
+          <section className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
+            <h2 className="text-lg font-bold mb-4">Create Match</h2>
+            <div className="grid gap-4 md:grid-cols-4">
+              <select onChange={e => setNewMatch({...newMatch, team1: e.target.value as Team})} className="p-3 bg-slate-50 rounded-xl">
+                <option value="">Team 1</option>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <select onChange={e => setNewMatch({...newMatch, team2: e.target.value as Team})} className="p-3 bg-slate-50 rounded-xl">
+                <option value="">Team 2</option>
+                {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input type="datetime-local" onChange={e => setNewMatch({...newMatch, dateTime: e.target.value})} className="p-3 bg-slate-50 rounded-xl" />
+              <button onClick={handleCreateMatch} className="bg-slate-900 text-white font-bold rounded-xl">Add Match</button>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-lg font-bold">Manage Matches</h2>
+            {matches.map(match => (
+              <div key={match.matchId} className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-bold">{match.team1} vs {match.team2}</span>
+                    <div className="text-xs text-slate-400">
+                      {format(match.dateTime.toDate(), 'PPP • p')} • {match.status}
+                      {match.winner && <span className="ml-2 text-red-600 font-bold">• Winner: {match.winner}</span>}
+                      {match.playerOfTheMatch && <span className="ml-2 text-slate-600">• POTM: {match.playerOfTheMatch}</span>}
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleDeleteMatch(match.matchId)}
+                    disabled={loading}
+                    className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all disabled:opacity-50 shrink-0"
+                    title="Delete Match"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                {match.status === 'upcoming' && (
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-50">
+                    <input
+                      type="text"
+                      placeholder="Player of the Match"
+                      value={matchPotm[match.matchId] || ''}
+                      onChange={e => setMatchPotm(prev => ({ ...prev, [match.matchId]: e.target.value }))}
+                      className="flex-1 p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-medium placeholder:text-slate-400"
+                    />
+                    <button
+                      onClick={() => handleResolveMatch(match, match.team1, matchPotm[match.matchId])}
+                      disabled={loading}
+                      className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {match.team1} Won
+                    </button>
+                    <button
+                      onClick={() => handleResolveMatch(match, match.team2, matchPotm[match.matchId])}
+                      disabled={loading}
+                      className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {match.team2} Won
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </section>
+        </div>
+      )}
+
+      {adminTab === 'users' && (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3">
             <button 
               onClick={handleResetLeaderboard}
               disabled={loading}
@@ -1544,91 +1663,13 @@ const AdminPanel = () => {
               Reset Leaderboard
             </button>
           </div>
-          <AnimatePresence>
-            {syncMessage && (
-              <motion.div 
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-100"
-              >
-                {syncMessage}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <UserManagement users={users} loading={loading} onDeleteUser={handleDeleteUser} />
         </div>
-      </div>
-      
-      <section className="bg-white rounded-3xl p-8 border border-slate-100 shadow-sm">
-        <h2 className="text-xl font-bold mb-6">Create Match</h2>
-        <div className="grid gap-4 md:grid-cols-4">
-          <select onChange={e => setNewMatch({...newMatch, team1: e.target.value as Team})} className="p-3 bg-slate-50 rounded-xl">
-            <option value="">Team 1</option>
-            {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <select onChange={e => setNewMatch({...newMatch, team2: e.target.value as Team})} className="p-3 bg-slate-50 rounded-xl">
-            <option value="">Team 2</option>
-            {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <input type="datetime-local" onChange={e => setNewMatch({...newMatch, dateTime: e.target.value})} className="p-3 bg-slate-50 rounded-xl" />
-          <button onClick={handleCreateMatch} className="bg-slate-900 text-white font-bold rounded-xl">Add Match</button>
-        </div>
-      </section>
+      )}
 
-      <section className="space-y-4">
-        <h2 className="text-xl font-bold">Manage Matches</h2>
-        {matches.map(match => (
-          <div key={match.matchId} className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-bold">{match.team1} vs {match.team2}</span>
-                <div className="text-xs text-slate-400">
-                  {format(match.dateTime.toDate(), 'PPP • p')} • {match.status}
-                  {match.winner && <span className="ml-2 text-red-600 font-bold">• Winner: {match.winner}</span>}
-                  {match.playerOfTheMatch && <span className="ml-2 text-slate-600">• POTM: {match.playerOfTheMatch}</span>}
-                </div>
-              </div>
-              <button 
-                onClick={() => handleDeleteMatch(match.matchId)}
-                disabled={loading}
-                className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all disabled:opacity-50 shrink-0"
-                title="Delete Match"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-            {match.status === 'upcoming' && (
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-50">
-                <input
-                  type="text"
-                  placeholder="Player of the Match"
-                  value={matchPotm[match.matchId] || ''}
-                  onChange={e => setMatchPotm(prev => ({ ...prev, [match.matchId]: e.target.value }))}
-                  className="flex-1 p-2 bg-slate-50 border border-slate-100 rounded-lg text-sm font-medium placeholder:text-slate-400"
-                />
-                <button
-                  onClick={() => handleResolveMatch(match, match.team1, matchPotm[match.matchId])}
-                  disabled={loading}
-                  className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
-                >
-                  {match.team1} Won
-                </button>
-                <button
-                  onClick={() => handleResolveMatch(match, match.team2, matchPotm[match.matchId])}
-                  disabled={loading}
-                  className="px-3 py-2 bg-slate-900 text-white text-xs font-bold rounded-lg disabled:opacity-50 whitespace-nowrap"
-                >
-                  {match.team2} Won
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-      </section>
-
-      <UserManagement users={users} loading={loading} onDeleteUser={handleDeleteUser} />
-
-      <PredictionLog users={users} matches={matches} />
+      {adminTab === 'predictions' && (
+        <PredictionLog users={users} matches={matches} />
+      )}
     </div>
   );
 };
@@ -1756,6 +1797,7 @@ const PredictionLog = ({ users, matches }: { users: UserProfile[]; matches: Matc
                                 <tr className="bg-slate-50 text-left">
                                   <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Match</th>
                                   <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Pick</th>
+                                  <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">POTM</th>
                                   <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Pts</th>
                                   <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Submitted</th>
                                   <th className="px-4 py-2.5 font-bold text-slate-500 text-xs uppercase tracking-wider">Last Updated</th>
@@ -1778,6 +1820,9 @@ const PredictionLog = ({ users, matches }: { users: UserProfile[]; matches: Matc
                                         <span className="px-2 py-0.5 bg-red-50 text-red-600 rounded font-bold text-xs">
                                           {pred.winner}
                                         </span>
+                                      </td>
+                                      <td className="px-4 py-3 text-xs text-slate-600">
+                                        {pred.playerOfTheMatch || <span className="text-slate-300">—</span>}
                                       </td>
                                       <td className="px-4 py-3">
                                         {pred.pointsEarned != null ? (
