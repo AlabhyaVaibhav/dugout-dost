@@ -25,7 +25,7 @@ import {
 } from 'firebase/firestore';
 import { db, auth, googleProvider, authReady } from './firebase';
 import { UserProfile, Match, LongTermPrediction, DailyPrediction, TEAMS, Team } from './types';
-import { Trophy, Calendar, LayoutDashboard, ListOrdered, Settings, Info, ChevronRight, CheckCircle2, AlertCircle, Trash2, MapPin, Clock, RefreshCw, Zap, LogOut, Mail, Pencil, Shield, UserPlus } from 'lucide-react';
+import { Trophy, Calendar, LayoutDashboard, ListOrdered, Settings, Info, ChevronRight, CheckCircle2, AlertCircle, Trash2, MapPin, Clock, RefreshCw, Zap, LogOut, Mail, Pencil, Shield, UserPlus, BarChart3 } from 'lucide-react';
 import { useIPLSchedule, fetchIPLSchedule, IPLMatch } from './iplFeed';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -1516,12 +1516,13 @@ const AdminPanel = () => {
     }
   };
 
-  const [adminTab, setAdminTab] = useState<'matches' | 'users' | 'predictions'>('matches');
+  const [adminTab, setAdminTab] = useState<'matches' | 'users' | 'predictions' | 'analytics'>('matches');
 
   const adminTabs: { key: typeof adminTab; label: string; icon: typeof Calendar }[] = [
     { key: 'matches', label: 'Matches', icon: Calendar },
     { key: 'users', label: 'Users', icon: UserPlus },
     { key: 'predictions', label: 'Prediction Log', icon: Zap },
+    { key: 'analytics', label: 'Analytics', icon: BarChart3 },
   ];
 
   return (
@@ -1670,6 +1671,140 @@ const AdminPanel = () => {
       {adminTab === 'predictions' && (
         <PredictionLog users={users} matches={matches} />
       )}
+
+      {adminTab === 'analytics' && (
+        <AdminAnalytics users={users} matches={matches} />
+      )}
+    </div>
+  );
+};
+
+const AdminAnalytics = ({ users, matches }: { users: UserProfile[]; matches: Match[] }) => {
+  const [dailyPreds, setDailyPreds] = useState<DailyPrediction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'dailyPredictions'), (snap) => {
+      setDailyPreds(snap.docs.map(d => d.data() as DailyPrediction));
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, 'dailyPredictions');
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-10 h-10 border-4 border-red-200 border-t-red-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  const matchMap = Object.fromEntries(matches.map(m => [m.matchId, m]));
+
+  const trendMap: Record<string, number> = {};
+  for (const p of dailyPreds) {
+    const m = matchMap[p.matchId];
+    if (!m) continue;
+    const dateKey = format(m.dateTime.toDate(), 'MMM d');
+    trendMap[dateKey] = (trendMap[dateKey] || 0) + 1;
+  }
+  const trendData = Object.entries(trendMap).sort((a, b) => {
+    const ma = matches.find(m => format(m.dateTime.toDate(), 'MMM d') === a[0]);
+    const mb = matches.find(m => format(m.dateTime.toDate(), 'MMM d') === b[0]);
+    if (ma && mb) return ma.dateTime.toDate().getTime() - mb.dateTime.toDate().getTime();
+    return 0;
+  });
+  const trendMax = Math.max(...trendData.map(d => d[1]), 1);
+
+  const teamPickCounts: Record<string, number> = {};
+  for (const p of dailyPreds) {
+    teamPickCounts[p.winner] = (teamPickCounts[p.winner] || 0) + 1;
+  }
+  const teamData = TEAMS.map(t => ({ team: t, count: teamPickCounts[t] || 0 })).sort((a, b) => b.count - a.count);
+  const teamMax = Math.max(...teamData.map(d => d.count), 1);
+
+  const teamColors: Record<string, string> = {
+    CSK: 'bg-yellow-400', DC: 'bg-blue-500', GT: 'bg-cyan-500', KKR: 'bg-purple-600',
+    LSG: 'bg-sky-400', MI: 'bg-blue-600', PBKS: 'bg-red-500', RR: 'bg-pink-500',
+    RCB: 'bg-red-600', SRH: 'bg-orange-500',
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-10 h-10 bg-red-50 rounded-xl flex items-center justify-center">
+              <Zap className="w-5 h-5 text-red-600" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Predictions</div>
+              <div className="text-3xl font-black text-slate-900">{dailyPreds.length}</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+              <UserPlus className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Users</div>
+              <div className="text-3xl font-black text-slate-900">{users.length}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-6">Predictions Trend by Match Date</h3>
+        {trendData.length === 0 ? (
+          <div className="py-8 text-center text-slate-400 text-sm">No prediction data yet.</div>
+        ) : (
+          <div className="space-y-3">
+            {trendData.map(([date, count]) => (
+              <div key={date} className="flex items-center gap-3">
+                <span className="text-xs font-bold text-slate-500 w-16 shrink-0 text-right">{date}</span>
+                <div className="flex-1 bg-slate-50 rounded-full h-7 overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${(count / trendMax) * 100}%` }}
+                    transition={{ duration: 0.6, ease: 'easeOut' }}
+                    className="h-full bg-gradient-to-r from-red-500 to-red-400 rounded-full flex items-center justify-end px-2.5"
+                  >
+                    <span className="text-[10px] font-black text-white">{count}</span>
+                  </motion.div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm">
+        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-6">Prediction Heatmap by Team</h3>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {teamData.map(({ team, count }) => {
+            const intensity = count / teamMax;
+            return (
+              <div key={team} className="relative bg-slate-50 rounded-2xl p-4 text-center overflow-hidden">
+                <div
+                  className={cn('absolute inset-0 rounded-2xl transition-opacity', teamColors[team] || 'bg-slate-400')}
+                  style={{ opacity: 0.1 + intensity * 0.35 }}
+                />
+                <div className="relative z-10">
+                  <div className="text-lg font-black text-slate-900">{team}</div>
+                  <div className="text-2xl font-black text-slate-800 mt-1">{count}</div>
+                  <div className="text-[10px] font-bold text-slate-400 uppercase">picks</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };
