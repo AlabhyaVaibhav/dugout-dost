@@ -1539,6 +1539,50 @@ const AdminPanel = () => {
     }
   };
 
+  const [bonusEmail, setBonusEmail] = useState('');
+  const [bonusMatchId, setBonusMatchId] = useState('');
+  const [bonusPoints, setBonusPoints] = useState('2');
+
+  const handleAwardBonusPoints = async () => {
+    const email = bonusEmail.trim().toLowerCase();
+    const delta = Math.round(Number(bonusPoints));
+    if (!email || !bonusMatchId || !Number.isFinite(delta) || delta === 0) {
+      setSyncMessage('Enter a valid email, match, and non-zero point amount.');
+      return;
+    }
+    const user = users.find(u => u.email.trim().toLowerCase() === email);
+    if (!user) {
+      setSyncMessage(`No user found with email ${bonusEmail.trim()}.`);
+      return;
+    }
+    const predId = `${user.uid}_${bonusMatchId}`;
+    try {
+      setLoading(true);
+      const predRef = doc(db, 'dailyPredictions', predId);
+      const predSnap = await getDoc(predRef);
+      if (!predSnap.exists()) {
+        setSyncMessage('No daily prediction document for this user and match (expected prediction id: uid_matchId).');
+        return;
+      }
+      const pred = predSnap.data() as DailyPrediction;
+      const nextEarned = (pred.pointsEarned ?? 0) + delta;
+      await setDoc(predRef, { pointsEarned: nextEarned }, { merge: true });
+
+      const userRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const ud = userDoc.data() as UserProfile;
+        await setDoc(userRef, { totalPoints: (ud.totalPoints ?? 0) + delta }, { merge: true });
+      }
+      setSyncMessage(`Awarded ${delta > 0 ? '+' : ''}${delta} pts to ${user.displayName} for the selected match.`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `dailyPredictions/${predId}`);
+      setSyncMessage('Failed to award bonus points. Check console.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResetLeaderboard = async () => {
     if (!confirm('Reset leaderboard? This sets totalPoints to 0 for ALL users. This cannot be undone.')) return;
     try {
@@ -1731,6 +1775,54 @@ const AdminPanel = () => {
               Reset Leaderboard
             </button>
           </div>
+
+          <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Bonus points (e.g. POTM correction)</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Adds to both <span className="font-medium">dailyPredictions.pointsEarned</span> for that match and the user&apos;s <span className="font-medium">totalPoints</span>.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <input
+                type="email"
+                placeholder="user@email.com"
+                value={bonusEmail}
+                onChange={e => setBonusEmail(e.target.value)}
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400"
+              />
+              <select
+                value={bonusMatchId}
+                onChange={e => setBonusMatchId(e.target.value)}
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium"
+              >
+                <option value="">Select match</option>
+                {[...matches]
+                  .sort((a, b) => a.dateTime.toDate().getTime() - b.dateTime.toDate().getTime())
+                  .map(m => (
+                    <option key={m.matchId} value={m.matchId}>
+                      {m.team1} vs {m.team2} — {format(m.dateTime.toDate(), 'MMM d, yyyy')}
+                    </option>
+                  ))}
+              </select>
+              <input
+                type="number"
+                placeholder="Points"
+                value={bonusPoints}
+                onChange={e => setBonusPoints(e.target.value)}
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium"
+              />
+              <button
+                type="button"
+                onClick={handleAwardBonusPoints}
+                disabled={loading}
+                className="px-4 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
+              >
+                Award points
+              </button>
+            </div>
+          </section>
+
           <UserManagement users={users} loading={loading} onDeleteUser={handleDeleteUser} />
         </div>
       )}
