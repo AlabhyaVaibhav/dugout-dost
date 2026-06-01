@@ -1348,6 +1348,98 @@ const Leaderboard = () => {
   );
 };
 
+type SeasonResults = {
+  winner: Team;
+  runnerUp: Team;
+  top4: Team[];
+  orangeCap: string;
+  purpleCap: string;
+  mvp: string;
+  lastPlace: Team;
+};
+
+const normalizeText = (value?: string) => (value || '').trim().toLowerCase();
+
+const csvEscape = (value: unknown) => {
+  const raw = value == null ? '' : String(value);
+  return `"${raw.replace(/"/g, '""')}"`;
+};
+
+const buildCsv = (headers: string[], rows: Array<Array<unknown>>) => {
+  const csvRows = [headers.map(csvEscape).join(',')];
+  for (const row of rows) {
+    csvRows.push(row.map(csvEscape).join(','));
+  }
+  return csvRows.join('\n');
+};
+
+const formatDateValue = (value: any) => {
+  if (value?.toDate && typeof value.toDate === 'function') {
+    return value.toDate().toISOString();
+  }
+  if (value instanceof Date) return value.toISOString();
+  if (value?.seconds && typeof value.seconds === 'number') {
+    return new Date(value.seconds * 1000).toISOString();
+  }
+  return value ?? '';
+};
+
+const downloadCsv = (filename: string, csv: string) => {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+};
+
+const parseTop4Teams = (value: string): Team[] => {
+  const parts = value.split(',').map(v => v.trim().toUpperCase()).filter(Boolean);
+  const uniqueParts = Array.from(new Set(parts));
+  if (uniqueParts.length !== 4) return [];
+  if (!uniqueParts.every(part => TEAMS.includes(part as Team))) return [];
+  return uniqueParts as Team[];
+};
+
+const computeSeasonPoints = (prediction: LongTermPrediction, actual: SeasonResults) => {
+  let points = 0;
+  const predTop4 = Array.isArray(prediction.top4) ? prediction.top4 : [];
+  const predTop4Set = new Set(predTop4);
+  const actualTop4Set = new Set(actual.top4);
+
+  if (prediction.winner === actual.winner) points += 50;
+  if (prediction.runnerUp === actual.runnerUp) points += 30;
+
+  let top4Hits = 0;
+  for (const team of predTop4Set) {
+    if (actualTop4Set.has(team)) top4Hits += 1;
+  }
+  points += top4Hits * 10;
+
+  if (
+    predTop4.length === 4 &&
+    actual.top4.length === 4 &&
+    predTop4.every((team, index) => team === actual.top4[index])
+  ) {
+    points += 20;
+  }
+
+  if (normalizeText(prediction.orangeCap) === normalizeText(actual.orangeCap)) points += 25;
+  if (normalizeText(prediction.purpleCap) === normalizeText(actual.purpleCap)) points += 25;
+  if (prediction.lastPlace === actual.lastPlace) points += 20;
+
+  const finalistSet = new Set([actual.winner, actual.runnerUp]);
+  if (finalistSet.has(prediction.winner) && finalistSet.has(prediction.runnerUp)) points += 20;
+  if (prediction.winner === actual.winner && prediction.runnerUp === actual.runnerUp) points += 30;
+
+  if (normalizeText(prediction.mvp) === normalizeText(actual.mvp)) points += 25;
+
+  return points;
+};
+
 const AdminPanel = () => {
   const [matches, setMatches] = useState<Match[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
@@ -1542,6 +1634,170 @@ const AdminPanel = () => {
   const [bonusEmail, setBonusEmail] = useState('');
   const [bonusMatchId, setBonusMatchId] = useState('');
   const [bonusPoints, setBonusPoints] = useState('2');
+  const [seasonWinner, setSeasonWinner] = useState<Team>('RCB');
+  const [seasonRunnerUp, setSeasonRunnerUp] = useState<Team>('PBKS');
+  const [seasonTop4Input, setSeasonTop4Input] = useState('RCB, PBKS, MI, GT');
+  const [seasonOrangeCap, setSeasonOrangeCap] = useState('Sai Sudharsan');
+  const [seasonPurpleCap, setSeasonPurpleCap] = useState('Prasidh Krishna');
+  const [seasonMvp, setSeasonMvp] = useState('Krunal Pandya');
+  const [seasonLastPlace, setSeasonLastPlace] = useState<Team>('CSK');
+
+  const handleBackupCsv = async () => {
+    try {
+      setLoading(true);
+      const [usersSnap, dailySnap, longSnap, matchesSnap] = await Promise.all([
+        getDocs(collection(db, 'users')),
+        getDocs(collection(db, 'dailyPredictions')),
+        getDocs(collection(db, 'longTermPredictions')),
+        getDocs(collection(db, 'matches')),
+      ]);
+
+      const usersData = usersSnap.docs.map(d => d.data() as UserProfile);
+      const userMap = new Map(usersData.map(u => [u.uid, u]));
+      const timestamp = format(new Date(), 'yyyyMMdd_HHmmss');
+
+      const leaderboardCsv = buildCsv(
+        ['rank', 'uid', 'displayName', 'email', 'role', 'totalPoints'],
+        [...usersData]
+          .sort((a, b) => (b.totalPoints ?? 0) - (a.totalPoints ?? 0))
+          .map((u, index) => [index + 1, u.uid, u.displayName, u.email, u.role, u.totalPoints ?? 0])
+      );
+
+      const dailyCsv = buildCsv(
+        ['predictionId', 'uid', 'email', 'displayName', 'matchId', 'winner', 'playerOfTheMatch', 'pointsEarned', 'submittedAt', 'updatedAt'],
+        dailySnap.docs.map(d => {
+          const pred = d.data() as DailyPrediction;
+          const user = userMap.get(pred.uid);
+          return [
+            pred.predictionId,
+            pred.uid,
+            user?.email || '',
+            user?.displayName || '',
+            pred.matchId,
+            pred.winner,
+            pred.playerOfTheMatch || '',
+            pred.pointsEarned ?? 0,
+            formatDateValue(pred.submittedAt),
+            formatDateValue(pred.updatedAt),
+          ];
+        })
+      );
+
+      const seasonCsv = buildCsv(
+        ['uid', 'email', 'displayName', 'winner', 'runnerUp', 'top4', 'orangeCap', 'purpleCap', 'mvp', 'lastPlace', 'seasonPointsEarned', 'seasonScoreAppliedAt', 'submittedAt', 'updatedAt'],
+        longSnap.docs.map(d => {
+          const pred = d.data() as LongTermPrediction;
+          const user = userMap.get(pred.uid);
+          return [
+            pred.uid,
+            user?.email || '',
+            user?.displayName || '',
+            pred.winner,
+            pred.runnerUp,
+            pred.top4?.join('|') || '',
+            pred.orangeCap || '',
+            pred.purpleCap || '',
+            pred.mvp || '',
+            pred.lastPlace || '',
+            pred.seasonPointsEarned ?? '',
+            formatDateValue(pred.seasonScoreAppliedAt),
+            formatDateValue(pred.submittedAt),
+            formatDateValue(pred.updatedAt),
+          ];
+        })
+      );
+
+      const matchesCsv = buildCsv(
+        ['matchId', 'team1', 'team2', 'dateTime', 'status', 'winner', 'playerOfTheMatch', 'margin'],
+        matchesSnap.docs.map(d => {
+          const m = d.data() as Match;
+          return [
+            m.matchId,
+            m.team1,
+            m.team2,
+            formatDateValue(m.dateTime),
+            m.status,
+            m.winner || '',
+            m.playerOfTheMatch || '',
+            m.margin || '',
+          ];
+        })
+      );
+
+      downloadCsv(`backup_leaderboard_${timestamp}.csv`, leaderboardCsv);
+      downloadCsv(`backup_daily_prediction_logs_${timestamp}.csv`, dailyCsv);
+      downloadCsv(`backup_season_prediction_logs_${timestamp}.csv`, seasonCsv);
+      downloadCsv(`backup_matches_${timestamp}.csv`, matchesCsv);
+      setSyncMessage('Backups downloaded: leaderboard, daily logs, season logs, matches.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'backup-csv-export');
+      setSyncMessage('Failed to export backup CSV files.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApplySeasonScores = async () => {
+    const parsedTop4 = parseTop4Teams(seasonTop4Input);
+    if (parsedTop4.length !== 4) {
+      setSyncMessage('Top 4 must contain exactly 4 unique team codes (e.g. RCB, PBKS, MI, GT).');
+      return;
+    }
+    if (seasonWinner === seasonRunnerUp) {
+      setSyncMessage('Winner and runner-up cannot be the same team.');
+      return;
+    }
+    const actual: SeasonResults = {
+      winner: seasonWinner,
+      runnerUp: seasonRunnerUp,
+      top4: parsedTop4,
+      orangeCap: seasonOrangeCap.trim(),
+      purpleCap: seasonPurpleCap.trim(),
+      mvp: seasonMvp.trim(),
+      lastPlace: seasonLastPlace,
+    };
+    try {
+      setLoading(true);
+      const longSnap = await getDocs(collection(db, 'longTermPredictions'));
+      let adjustedUsers = 0;
+      let totalDelta = 0;
+
+      for (const predDoc of longSnap.docs) {
+        const pred = predDoc.data() as LongTermPrediction;
+        const nextPoints = computeSeasonPoints(pred, actual);
+        const prevPoints = Number(pred.seasonPointsEarned ?? 0);
+        const delta = nextPoints - prevPoints;
+
+        await setDoc(predDoc.ref, {
+          seasonPointsEarned: nextPoints,
+          seasonScoreAppliedAt: new Date(),
+          updatedAt: new Date(),
+        }, { merge: true });
+
+        if (delta !== 0) {
+          const userRef = doc(db, 'users', pred.uid);
+          const userDoc = await getDoc(userRef);
+          if (userDoc.exists()) {
+            const userData = userDoc.data() as UserProfile;
+            await setDoc(userRef, { totalPoints: (userData.totalPoints ?? 0) + delta }, { merge: true });
+            adjustedUsers += 1;
+            totalDelta += delta;
+          }
+        }
+      }
+
+      setSyncMessage(`Season scores applied. Updated ${longSnap.size} predictions; adjusted ${adjustedUsers} users (net ${totalDelta >= 0 ? '+' : ''}${totalDelta} pts).`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'longTermPredictions');
+      const detail = error instanceof Error ? error.message : String(error);
+      const permissionHint = /permission|insufficient/i.test(detail)
+        ? ' Deploy updated Firestore rules: firebase deploy --only firestore:rules'
+        : '';
+      setSyncMessage(`Failed to apply season scores: ${detail}.${permissionHint}`);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAwardBonusPoints = async () => {
     const email = bonusEmail.trim().toLowerCase();
@@ -1819,6 +2075,75 @@ const AdminPanel = () => {
                 className="px-4 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all disabled:opacity-50"
               >
                 Award points
+              </button>
+            </div>
+          </section>
+
+          <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Backup scores & logs (CSV)</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Downloads snapshots of leaderboard, daily logs, season logs, and matches.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleBackupCsv}
+              disabled={loading}
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-all disabled:opacity-50"
+            >
+              Download backup CSV files
+            </button>
+          </section>
+
+          <section className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm space-y-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Apply season-long scores</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Applies README scoring rules and updates both <span className="font-medium">longTermPredictions.seasonPointsEarned</span> and user totals.
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+              <select value={seasonWinner} onChange={e => setSeasonWinner(e.target.value as Team)} className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+                {TEAMS.map(t => <option key={`winner-${t}`} value={t}>Winner: {t}</option>)}
+              </select>
+              <select value={seasonRunnerUp} onChange={e => setSeasonRunnerUp(e.target.value as Team)} className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+                {TEAMS.map(t => <option key={`runner-${t}`} value={t}>Runner-up: {t}</option>)}
+              </select>
+              <select value={seasonLastPlace} onChange={e => setSeasonLastPlace(e.target.value as Team)} className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium">
+                {TEAMS.map(t => <option key={`last-${t}`} value={t}>Last place: {t}</option>)}
+              </select>
+              <input
+                value={seasonTop4Input}
+                onChange={e => setSeasonTop4Input(e.target.value)}
+                placeholder="Top 4 codes: RCB, PBKS, MI, GT"
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400"
+              />
+              <input
+                value={seasonOrangeCap}
+                onChange={e => setSeasonOrangeCap(e.target.value)}
+                placeholder="Orange Cap"
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400"
+              />
+              <input
+                value={seasonPurpleCap}
+                onChange={e => setSeasonPurpleCap(e.target.value)}
+                placeholder="Purple Cap"
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400"
+              />
+              <input
+                value={seasonMvp}
+                onChange={e => setSeasonMvp(e.target.value)}
+                placeholder="MVP"
+                className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-sm font-medium placeholder:text-slate-400"
+              />
+              <button
+                type="button"
+                onClick={handleApplySeasonScores}
+                disabled={loading}
+                className="px-4 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all disabled:opacity-50"
+              >
+                Apply season scores
               </button>
             </div>
           </section>

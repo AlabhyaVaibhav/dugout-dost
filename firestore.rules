@@ -33,12 +33,22 @@ service cloud.firestore {
              data.role in ['admin', 'user'];
     }
 
-    function isValidLongTermPrediction(data) {
-      return hasOnlyAllowedFields(['uid', 'winner', 'runnerUp', 'top4', 'orangeCap', 'purpleCap', 'mvp', 'lastPlace', 'submittedAt', 'updatedAt']) &&
-             data.uid is string && data.uid == request.auth.uid &&
+    function longTermPredictionFields() {
+      return ['uid', 'winner', 'runnerUp', 'top4', 'orangeCap', 'purpleCap', 'mvp', 'lastPlace', 'submittedAt', 'updatedAt', 'seasonPointsEarned', 'seasonScoreAppliedAt'];
+    }
+
+    function hasValidLongTermPredictionShape(data) {
+      return hasOnlyAllowedFields(longTermPredictionFields()) &&
+             data.uid is string && data.uid.size() > 0 &&
              data.winner is string && data.runnerUp is string &&
              data.top4 is list && data.orangeCap is string &&
-             data.purpleCap is string && data.lastPlace is string;
+             data.purpleCap is string && data.lastPlace is string &&
+             (!('seasonPointsEarned' in data) || data.seasonPointsEarned is number) &&
+             (!('seasonScoreAppliedAt' in data) || data.seasonScoreAppliedAt is timestamp);
+    }
+
+    function isValidLongTermPrediction(data) {
+      return hasValidLongTermPredictionShape(data) && data.uid == request.auth.uid;
     }
 
     function isValidMatch(data) {
@@ -68,7 +78,10 @@ service cloud.firestore {
     match /longTermPredictions/{uid} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isOwner(uid) && isValidLongTermPrediction(request.resource.data);
-      allow update: if isAuthenticated() && isOwner(uid) && isValidLongTermPrediction(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (isAdmin() && hasValidLongTermPredictionShape(request.resource.data)) ||
+        (isOwner(uid) && isValidLongTermPrediction(request.resource.data))
+      );
       allow delete: if isAdmin();
     }
 

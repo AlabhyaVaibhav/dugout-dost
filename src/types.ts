@@ -23,6 +23,8 @@ export interface LongTermPrediction {
   purpleCap: string;
   mvp: string;
   lastPlace: Team;
+  seasonPointsEarned?: number;
+  seasonScoreAppliedAt?: any;
   submittedAt: any;
   updatedAt?: any;
 }
